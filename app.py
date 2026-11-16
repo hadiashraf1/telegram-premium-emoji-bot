@@ -7,11 +7,12 @@ import secrets
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 from collections import OrderedDict
 
 from catalog import Catalog, ID, custom_ids, pack_name, utf16_length
 
-VERSION = '0.4.1'
+VERSION = '0.5.1'
 LOG = logging.getLogger('premium-emoji')
 HELP = """راهنمای بانک ایموجی پرمیوم
 
@@ -37,6 +38,7 @@ class ApiError(Exception):
 class Telegram:
     def __init__(self, token):
         self.base = 'https://api.telegram.org/bot' + token + '/'
+        self.file_base = 'https://api.telegram.org/file/bot' + token + '/'
 
     def call(self, method, **payload):
         req = urllib.request.Request(self.base + method, json.dumps(payload).encode(), {'Content-Type':'application/json'})
@@ -59,6 +61,45 @@ class Telegram:
         if not data.get('ok'):
             raise ApiError(data.get('error_code', 0), data.get('description', ''), data.get('parameters', {}).get('retry_after', 0))
         return data['result']
+
+
+    def thumbnail(self, file_id):
+        """Download only a small Telegram-hosted image; never expose token URLs."""
+        info = self.call('getFile', file_id=file_id)
+        path = info.get('file_path', '')
+        if not path or path.startswith('/') or '..' in path.split('/'):
+            raise ApiError(400)
+        try:
+            with urllib.request.urlopen(self.file_base + urllib.parse.quote(path, safe='/'), timeout=8) as r:
+                data = r.read(1024 * 1024 + 1)
+        except (OSError, ValueError):
+            raise ApiError(0) from None
+        if len(data) > 1024 * 1024:
+            raise ApiError(400)
+        if data.startswith(b'\xff\xd8\xff'): return data, 'jpg', 'image/jpeg'
+        if data.startswith(b'\x89PNG\r\n\x1a\n'): return data, 'png', 'image/png'
+        if data[:4] == b'RIFF' and data[8:12] == b'WEBP': return data, 'webp', 'image/webp'
+        raise ApiError(400)
+
+    def send_thumbnail(self, chat, file_id, caption, keyboard):
+        data, ext, mime = self.thumbnail(file_id)
+        # Telegram accepts JPEG/PNG photos; WebP is also available as a document.
+        method, field = ('sendDocument', 'document') if ext == 'webp' else ('sendPhoto', 'photo')
+        boundary = secrets.token_hex(24)
+        def part(name, value):
+            return f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+        body = part('chat_id', chat) + part('caption', caption) + part('reply_markup', json.dumps(markup(keyboard)))
+        body += f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="preview.{ext}"\r\nContent-Type: {mime}\r\n\r\n'.encode() + data + f'\r\n--{boundary}--\r\n'.encode()
+        req = urllib.request.Request(self.base + method, body, {'Content-Type': 'multipart/form-data; boundary=' + boundary})
+        try:
+            with urllib.request.urlopen(req, timeout=12) as r:
+                result = json.load(r)
+        except urllib.error.HTTPError as err:
+            raise ApiError(err.code) from None
+        except (OSError, ValueError):
+            raise ApiError(0) from None
+        if not result.get('ok'): raise ApiError(result.get('error_code', 0))
+        return result['result']
 
 
 def markup(rows):
@@ -98,21 +139,85 @@ class Bot:
         rows, total, page = self.catalog.search(query, category, pack, page)
         label = query or category or pack or 'همه ایموجی‌ها'
         text = f'🔎 {label}\nتعداد: {total} | صفحه {page+1}/{max(1,(total+7)//8)}\n'
-        buttons = []
+        plain = text
+        buttons, entities = [], []
         if not rows:
-            text += '\nنتیجه‌ای پیدا نشد. یک عبارت دیگر را امتحان کنید یا بعد از افزودن پک‌ها دوباره جستجو کنید.'
-        for row in rows:
-            text += f"\n{row['emoji']} | {row['id']}\n{row['title']}"
-            buttons.append([{'text': f"{row['emoji']} جزئیات", 'callback_data': 'e:'+row['id']}, copy_button('کپی شناسه', row['id'])])
+            text += '\nنتیجه‌ای پیدا نشد. یک عبارت دیگر را امتحان کنید.'
+            plain = text
+        for i, row in enumerate(rows, 1):
+            emoji = row['emoji'] or '⭐'
+            prefix = f'\n{i}. '
+            entities.append({'type': 'custom_emoji', 'offset': utf16_length(text + prefix),
+                             'length': utf16_length(emoji), 'custom_emoji_id': row['id']})
+            text += prefix + f"{emoji} | {row['id']}\n{row['title']}"
+            plain += prefix + f"{row['id']}\n{row['title']}"
+            buttons.append([copy_button(f'{i}. کپی شناسه', row['id']),
+                            copy_button(f'{i}. کپی HTML', html_code(row['id'], emoji))])
         nav = []
         if page: nav.append({'text':'◀️ قبلی','callback_data':f'p:{sid}:{page-1}'})
         if (page+1)*8 < total: nav.append({'text':'بعدی ▶️','callback_data':f'p:{sid}:{page+1}'})
         if nav: buttons.append(nav)
         buttons.append([{'text':'🏠 منوی اصلی','callback_data':'home'}])
-        if message_id:
-            self.api.call('editMessageText',chat_id=chat,message_id=message_id,text=text,reply_markup=markup(buttons))
-        else:
-            self.send(chat,text,buttons)
+        payload = {'chat_id': chat, 'text': text, 'reply_markup': markup(buttons),
+                   'link_preview_options': {'is_disabled': True}}
+        if entities: payload['entities'] = entities
+        method = 'editMessageText' if message_id else 'sendMessage'
+        if message_id: payload['message_id'] = message_id
+        try:
+            result = self.api.call(method, **payload)
+        except ApiError as err:
+            if err.code != 400 or not entities: raise
+            if 'message is not modified' in err.description.lower(): return
+            LOG.warning('Inline custom emoji rejected: HTTP 400')
+            result = None
+        if entities and (result is None or (isinstance(result, dict) and
+                [e.get('custom_emoji_id') for e in result.get('entities', []) if e.get('type') == 'custom_emoji'] !=
+                [e['custom_emoji_id'] for e in entities])):
+            LOG.warning('Inline custom emoji unavailable; verify bot owner Premium or Fragment username')
+            payload.pop('entities', None)
+            payload['text'] = plain + '\n\nنمایش ایموجی پرمیوم در پیام توسط تلگرام تأیید نشد. مالک ربات باید مجوز ارسال ایموجی پرمیوم داشته باشد.'
+            if isinstance(result, dict) and result.get('message_id'):
+                payload['message_id'] = result['message_id']
+                method = 'editMessageText'
+            self.api.call(method, **payload)
+        elif entities:
+            LOG.info('Inline custom emoji accepted: %d', len(entities))
+
+    def preview(self, chat, eid):
+        row = self.catalog.get(eid) or {}
+        # Reuse the exact sticker file ID where Telegram permits it.
+        file_id = row.get('file_id')
+        sticker = None
+        if not file_id:
+            items = self.api.call('getCustomEmojiStickers', custom_emoji_ids=[eid])
+            sticker = next((x for x in items if str(x.get('custom_emoji_id')) == eid), None)
+            if not sticker:
+                self.send(chat, 'ایموجی با این شناسه پیدا نشد.'); return
+            file_id = sticker.get('file_id')
+        emoji = row.get('emoji') or (sticker or {}).get('emoji') or '⭐'
+        title = row.get('title') or (sticker or {}).get('set_name') or '—'
+        pack = row.get('pack') or (sticker or {}).get('set_name')
+        buttons = [[copy_button('📋 کپی شناسه', eid), copy_button('کپی HTML', html_code(eid, emoji))]]
+        if pack and pack.replace('_', '').isalnum():
+            buttons.append([{'text':'مشاهده پک اصلی', 'url':'https://t.me/addemoji/'+pack}])
+        buttons.append([{'text':'🏠 منوی اصلی', 'callback_data':'home'}])
+        if file_id:
+            try:
+                self.api.call('sendSticker', chat_id=chat, sticker=file_id, reply_markup=markup(buttons))
+                return
+            except ApiError as err:
+                if err.code != 400: raise
+        if sticker is None:
+            items = self.api.call('getCustomEmojiStickers', custom_emoji_ids=[eid])
+            sticker = next((x for x in items if str(x.get('custom_emoji_id')) == eid), {})
+        thumb = (sticker.get('thumbnail') or {}).get('file_id')
+        if thumb:
+            try:
+                self.api.send_thumbnail(chat, thumb, f'پیش‌نمایش ثابت | {title}\nشناسه: {eid}', buttons)
+                return
+            except ApiError as err:
+                if err.code != 400: raise
+        self.send(chat, f'نمایش فایل این ایموجی در ربات در دسترس نیست. پک اصلی را باز کنید.\n{title}\nشناسه: {eid}', buttons)
 
     def detail(self, chat, eid, row=None):
         row = row or self.catalog.get(eid)
@@ -125,6 +230,7 @@ class Bot:
         title = row.get('title') or row.get('set_name') or '—'
         text = f'{emoji} ایموجی پرمیوم\nشناسه: {eid}\nپک: {title}'
         buttons = [[copy_button('📋 کپی شناسه', eid),copy_button('کپی HTML',html_code(eid,emoji))]]
+        buttons.append([{'text':'🎨 پیش‌نمایش واقعی','callback_data':'v:'+eid}])
         pack = row.get('pack') or row.get('set_name')
         if pack and pack.replace('_','').isalnum():
             buttons.append([{'text':'مشاهده پک تلگرام','url':'https://t.me/addemoji/'+pack}])
@@ -226,6 +332,7 @@ class Bot:
         elif data == 'browse': self.page(chat,uid,self.new_session(uid))
         elif data == 'categories': self.categories(chat,uid)
         elif data.startswith('e:') and ID.fullmatch(data[2:]): self.detail(chat,data[2:])
+        elif data.startswith('v:') and ID.fullmatch(data[2:]): self.preview(chat,data[2:])
         elif data.startswith('p:'):
             parts = data.split(':')
             if len(parts)!=3 or not parts[2].isdigit(): return

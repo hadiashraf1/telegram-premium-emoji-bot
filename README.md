@@ -1,11 +1,12 @@
 # Telegram Premium Emoji Bot
 
-A Persian-language, self-hosted Telegram custom emoji catalog and ID extractor. Rebuilt as **v0.4.0** from the previous project requirements. The original archive was not available. Uses Python 3.12 (standard library only), SQLite and the official Telegram Bot API; no MTProto user session or third-party catalog is required.
+A Persian-language, self-hosted Telegram custom emoji catalog and ID extractor. Rebuilt as **v0.5.1** from the previous project requirements. The original archive was not available. Uses Python 3.12 (standard library only), SQLite and the official Telegram Bot API; no MTProto user session or third-party catalog is required.
 
 ## Features
 - Extract unique `custom_emoji_id` values from messages and captions.
 - Import public custom emoji packs using `getStickerSet`, with administrator-only writes.
 - Browse, search, categorize, and paginate a persistent local catalog.
+- Show actual custom emoji inline in search, browse and paginated results when Telegram permits them, with a clear text-only fallback if unavailable.
 - Copy an ID or its Telegram HTML representation with one tap on supported clients.
 - Resolve an individual ID with `getCustomEmojiStickers`; render a custom-emoji preview when the bot is permitted, otherwise use its ordinary emoji fallback.
 - Docker Compose deployment and offline automated tests.
