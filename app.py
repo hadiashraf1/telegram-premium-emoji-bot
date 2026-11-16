@@ -11,20 +11,21 @@ from collections import OrderedDict
 
 from catalog import Catalog, ID, custom_ids, pack_name, utf16_length
 
-VERSION = '0.3.0'
+VERSION = '0.4.1'
 LOG = logging.getLogger('premium-emoji')
-HELP = '''🤖 بانک ایموجی پرمیوم تلگرام
+HELP = """راهنمای بانک ایموجی پرمیوم
 
-ایموجی پرمیوم را ارسال کنید تا شناسه آن را بگیرید.
-/browse — مرور بانک
-/search کلمه — جستجو با نام، شناسه یا ایموجی
-/categories — دسته‌بندی‌ها
-/pack نام_پک — مرور یک پک
-/id شناسه — نمایش اطلاعات ایموجی
-/help — راهنما
+• ایموجی پرمیوم را ارسال یا فوروارد کنید تا شناسه آن را دریافت کنید.
+• برای جستجو، نام فارسی یا انگلیسی، ایموجی یا شناسه را بفرستید.
+• /browse — مرور بانک
+• /categories — دسته‌بندی‌ها
+• /packs — فهرست پک‌ها
+• /search قلب — جستجو
+• /id شناسه — جزئیات و کپی کد
+• /stats — آمار بانک
 
-مدیر: /import دسته‌بندی | لینک پک
-مثال: /import عمومی | https://t.me/addemoji/PackName'''
+مدیر: /import دسته‌بندی | نام_پک
+مثال: /import قلب | HeartsEmoji"""
 
 
 class ApiError(Exception):
@@ -39,8 +40,10 @@ class Telegram:
 
     def call(self, method, **payload):
         req = urllib.request.Request(self.base + method, json.dumps(payload).encode(), {'Content-Type':'application/json'})
+        started = time.monotonic()
+        deadline = 8 if method == 'getUpdates' else (20 if method == 'getStickerSet' else 12)
         try:
-            with urllib.request.urlopen(req, timeout=40) as response:
+            with urllib.request.urlopen(req, timeout=deadline) as response:
                 data = json.load(response)
         except urllib.error.HTTPError as err:
             try:
@@ -49,6 +52,10 @@ class Telegram:
                 raise ApiError(err.code) from None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             raise ApiError(0) from None
+        finally:
+            elapsed = time.monotonic() - started
+            if elapsed >= (5 if method == 'getUpdates' else 2):
+                LOG.warning('Slow Telegram method=%s elapsed=%.2fs', method, elapsed)
         if not data.get('ok'):
             raise ApiError(data.get('error_code', 0), data.get('description', ''), data.get('parameters', {}).get('retry_after', 0))
         return data['result']
@@ -74,6 +81,7 @@ class Bot:
     def send(self, chat, text, keyboard=None, **extra):
         if keyboard:
             extra['reply_markup'] = markup(keyboard)
+        extra.setdefault('link_preview_options', {'is_disabled': True})
         return self.api.call('sendMessage', chat_id=chat, text=text, **extra)
 
     def new_session(self, uid, query='', category='', pack=''):
@@ -91,6 +99,8 @@ class Bot:
         label = query or category or pack or 'همه ایموجی‌ها'
         text = f'🔎 {label}\nتعداد: {total} | صفحه {page+1}/{max(1,(total+7)//8)}\n'
         buttons = []
+        if not rows:
+            text += '\nنتیجه‌ای پیدا نشد. یک عبارت دیگر را امتحان کنید یا بعد از افزودن پک‌ها دوباره جستجو کنید.'
         for row in rows:
             text += f"\n{row['emoji']} | {row['id']}\n{row['title']}"
             buttons.append([{'text': f"{row['emoji']} جزئیات", 'callback_data': 'e:'+row['id']}, copy_button('کپی شناسه', row['id'])])
@@ -125,7 +135,28 @@ class Bot:
             self.send(chat,text,buttons)
 
     def start(self, chat):
-        self.send(chat, HELP, [[{'text':'📚 مرور بانک','callback_data':'browse'},{'text':'🗂 دسته‌بندی‌ها','callback_data':'categories'}]])
+        count, packs, categories = self.catalog.stats()
+        self.send(chat, f'✨ بانک ایموجی پرمیوم تلگرام\n\n{count:,} ایموجی | {packs:,} پک | {categories} دسته\n\nایموجی پرمیوم را بفرستید تا شناسه آن را بگیرید یا از منوی زیر انتخاب کنید.', [
+            [{'text':'🔎 جستجو','callback_data':'search'},{'text':'📚 مرور بانک','callback_data':'browse'}],
+            [{'text':'🗂 دسته‌بندی‌ها','callback_data':'categories'},{'text':'🎨 پک‌ها','callback_data':'packs:0'}],
+            [{'text':'📊 آمار بانک','callback_data':'stats'},{'text':'❔ راهنما','callback_data':'help'}]])
+
+    def stats(self, chat):
+        count, packs, categories = self.catalog.stats()
+        self.send(chat, f'📊 آمار بانک\n\nایموجی‌ها: {count:,}\nپک‌ها: {packs:,}\nدسته‌ها: {categories}\n\nاین آمار فقط شامل موارد واردشده به بانک است.')
+
+    def packs(self, chat, uid, page=0, message_id=None):
+        rows, total, page = self.catalog.packs(page)
+        buttons = [[{'text':f'{title[:42]} ({count})','callback_data':'p:'+self.new_session(uid,pack=pack)+':0'}] for pack,title,count in rows]
+        nav = []
+        if page: nav.append({'text':'◀️ قبلی','callback_data':f'packs:{page-1}'})
+        if (page+1)*12 < total: nav.append({'text':'بعدی ▶️','callback_data':f'packs:{page+1}'})
+        if nav: buttons.append(nav)
+        buttons.append([{'text':'🏠 منوی اصلی','callback_data':'home'}])
+        text = f'🎨 پک‌های ایموجی\nتعداد: {total} | صفحه {page+1}/{max(1,(total+11)//12)}'
+        if message_id:
+            self.api.call('editMessageText',chat_id=chat,message_id=message_id,text=text,reply_markup=markup(buttons))
+        else: self.send(chat,text,buttons)
 
     def categories(self, chat, uid):
         rows = self.catalog.categories()
@@ -162,7 +193,10 @@ class Bot:
         text = (msg.get('text') or '').strip()
         cmd, _, args = text.partition(' ')
         cmd = cmd.split('@',1)[0].lower()
-        if cmd in ('/start','/help'): self.start(chat)
+        if cmd == '/start': self.start(chat)
+        elif cmd == '/help': self.send(chat,HELP)
+        elif cmd == '/stats': self.stats(chat)
+        elif cmd == '/packs': self.packs(chat,uid)
         elif cmd == '/browse': self.page(chat,uid,self.new_session(uid))
         elif cmd == '/search':
             if not args.strip(): self.send(chat,'مثال: /search heart'); return
@@ -185,6 +219,10 @@ class Bot:
         if not chat or msg.get('chat',{}).get('type') != 'private': return
         data = cb.get('data','')
         if data == 'home': self.start(chat)
+        elif data == 'search': self.send(chat,'🔎 نام فارسی، انگلیسی، ایموجی یا شناسه را همینجا بفرستید. مثال: قلب یا fire')
+        elif data == 'help': self.send(chat,HELP)
+        elif data == 'stats': self.stats(chat)
+        elif data.startswith('packs:') and data[6:].isdigit(): self.packs(chat,uid,int(data[6:]),msg.get('message_id') if data!='packs:0' else None)
         elif data == 'browse': self.page(chat,uid,self.new_session(uid))
         elif data == 'categories': self.categories(chat,uid)
         elif data.startswith('e:') and ID.fullmatch(data[2:]): self.detail(chat,data[2:])
@@ -208,17 +246,31 @@ class Bot:
                 self.send(chat,'درخواست نامعتبر بود یا تلگرام پاسخ نداد. لینک یا شناسه را بررسی کنید.')
 
     def run(self):
-        self.api.call('deleteWebhook',drop_pending_updates=False)
+        while True:
+            try:
+                self.api.call('deleteWebhook',drop_pending_updates=False)
+                break
+            except ApiError as err:
+                if err.code in (401,404,409): raise SystemExit(f'Telegram API error {err.code}; check token or competing poller.') from None
+                LOG.warning('Startup Telegram connection failed: %s',err)
+                time.sleep(min(max(err.retry_after,3),60))
         offset = 0
         while True:
             try:
-                updates = self.api.call('getUpdates',offset=offset,timeout=25,allowed_updates=['message','callback_query'])
+                updates = self.api.call('getUpdates',offset=offset,timeout=2,allowed_updates=['message','callback_query'])
+                if not updates:
+                    time.sleep(0.7)
                 for update in updates:
+                    started = time.monotonic()
+                    msg = update.get('message', {})
+                    age = max(0, time.time() - msg['date']) if isinstance(msg.get('date'), (int, float)) else -1
+                    LOG.info('Update received age=%.1fs', age)
                     try: self.handle(update)
                     except ApiError as err:
                         if err.retry_after: time.sleep(min(err.retry_after,60))
                         LOG.warning('Update failed: %s',err)
                     except Exception: LOG.error('Update processing failed')
+                    LOG.info('Update handled elapsed=%.2fs', time.monotonic()-started)
                     offset = update['update_id']+1
             except ApiError as err:
                 if err.code in (401,404,409): raise SystemExit(f'Telegram API error {err.code}; check token or competing poller.') from None

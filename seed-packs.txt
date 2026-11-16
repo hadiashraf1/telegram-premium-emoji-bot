@@ -1,0 +1,36 @@
+# Public pack names from https://t.me/s/CustomEmojiPacks?q=%23official and https://t.me/s/CustomEmojiPacks?before=37
+# Category | pack short name. Live Bot API validates each pack before importing.
+آیکون‌های تلگرام|EmojiCategories
+واکنش‌ها|WaterworldEmoji
+واکنش‌ها|AnimatedAsianEmoji
+واکنش‌ها|CreepyEmoji
+قلب و عشق|HeartsEmoji
+خوراکی‌ها|VeggiesEmoji
+پرچم‌ها|IconicFlagsEmoji
+حیوانات|WolfEmoji
+واکنش‌ها|FlameEmoji
+حیوانات|DogeEmoji
+آیکون‌های تلگرام|NewsEmoji
+میم و سرگرمی|PepeEmoji
+میم و سرگرمی|GummyBearEmoji
+میم و سرگرمی|ClownEmoji
+حروف و اعداد|RansomNote
+آیکون و نماد|SignsEmoji
+آیکون و نماد|OutlineEmoji
+خوراکی‌ها|CherryEmoji
+حیوانات|RabbitEmoji
+طبیعت|MoonEmoji
+دست و اشاره|HandEmoji
+حیوانات|DuckEmoji
+واکنش‌ها|FaceEmoji
+واکنش‌ها|RetroEmoji
+میم و سرگرمی|SkullEmoji
+حیوانات|FoxEmoji
+حیوانات|FrogEmoji
+میم و سرگرمی|MemeEmoji
+واکنش‌ها|RestrictedEmoji
+آیکون و نماد|SocialEmojis
+# https://t.me/s/CustomEmojiPacks?before=874
+قلب و عشق|RGBHearts
+تکنولوژی و ارز دیجیتال|MajorEmojis
+هدیه|gifts_emoji_by_gifts_changes_bot

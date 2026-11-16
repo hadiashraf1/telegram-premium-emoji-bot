@@ -28,7 +28,25 @@ def custom_ids(message):
         value = str(entity.get('custom_emoji_id', ''))
         if entity.get('type') == 'custom_emoji' and ID.fullmatch(value) and value not in result:
             result.append(value)
+    sticker = message.get('sticker') or {}
+    value = str(sticker.get('custom_emoji_id', ''))
+    if ID.fullmatch(value) and value not in result:
+        result.append(value)
     return result
+
+
+ALIASES = {
+    'قلب': ('❤', 'heart'), 'heart': ('❤', 'heart'),
+    'آتش': ('🔥', 'flame', 'fire'), 'fire': ('🔥', 'flame', 'fire'),
+    'تایید': ('✅', '✔', '☑', 'check'), 'تأیید': ('✅', '✔', '☑', 'check'),
+    'check': ('✅', '✔', '☑', 'check'), 'خطا': ('❌', '✖', 'error'),
+    'error': ('❌', '✖', 'error'), 'پرداخت': ('💳', '💰', '💵', 'payment'),
+    'خرید': ('🛒', '🛍', 'shopping'), 'هدیه': ('🎁', 'gift'),
+    'جستجو': ('🔍', '🔎', 'search'), 'ساعت': ('⏰', '⌛', 'clock'),
+    'قفل': ('🔒', '🔐', 'lock'), 'ستاره': ('⭐', '🌟', 'star'),
+    'پرچم': ('flag', 'پرچم'), 'flag': ('flag', 'پرچم'),
+    'گربه': ('🐱', '🐈', 'cat'), 'خنده': ('😂', '🤣', 'laugh'),
+}
 
 
 def utf16_length(text):
@@ -79,8 +97,11 @@ class Catalog:
         page, size = max(0, int(page)), max(1, min(20, int(size)))
         where, args = [], []
         if query:
-            where.append('(instr(lower(id),lower(?)) OR instr(lower(emoji),lower(?)) OR instr(lower(title),lower(?)) OR instr(lower(pack),lower(?)) OR instr(lower(category),lower(?)))')
-            args.extend([query]*5)
+            terms = tuple(dict.fromkeys((query, *ALIASES.get(query.lower(), ()))))
+            predicate = '(instr(lower(id),lower(?)) OR instr(lower(emoji),lower(?)) OR instr(lower(title),lower(?)) OR instr(lower(pack),lower(?)) OR instr(lower(category),lower(?)))'
+            where.append('(' + ' OR '.join([predicate]*len(terms)) + ')')
+            for term in terms:
+                args.extend([term]*5)
         if category:
             where.append('category=?'); args.append(category)
         if pack:
@@ -100,3 +121,15 @@ class Catalog:
         with self.db() as db:
             row = db.execute('SELECT * FROM emoji WHERE id=?', (eid,)).fetchone()
         return dict(row) if row else None
+
+    def stats(self):
+        with self.db() as db:
+            r = db.execute("SELECT count(*), count(DISTINCT pack), count(DISTINCT category) FROM emoji").fetchone()
+            return tuple(r)
+
+    def packs(self, page=0, size=12):
+        with self.db() as db:
+            total = db.execute("SELECT count(DISTINCT pack) FROM emoji").fetchone()[0]
+            page = min(max(0, int(page)), max(0, (total-1)//size))
+            rows = db.execute("SELECT pack, min(title), count(*) FROM emoji GROUP BY pack ORDER BY pack LIMIT ? OFFSET ?", (size, page*size)).fetchall()
+        return [tuple(r) for r in rows], total, page

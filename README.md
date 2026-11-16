@@ -1,6 +1,6 @@
 # Telegram Premium Emoji Bot
 
-A Persian-language, self-hosted Telegram custom emoji catalog and ID extractor. Rebuilt as **v0.3.0** from the previous project requirements. The original archive was not available. Uses Python 3.12 (standard library only), SQLite and the official Telegram Bot API; no MTProto user session or third-party catalog is required.
+A Persian-language, self-hosted Telegram custom emoji catalog and ID extractor. Rebuilt as **v0.4.0** from the previous project requirements. The original archive was not available. Uses Python 3.12 (standard library only), SQLite and the official Telegram Bot API; no MTProto user session or third-party catalog is required.
 
 ## Features
 - Extract unique `custom_emoji_id` values from messages and captions.
@@ -37,7 +37,7 @@ For local development (Python 3.11+): set environment variables `BOT_TOKEN`, `AD
 | `/id 123456789` | Resolve a custom emoji ID |
 | `/import عمومی \| https://t.me/addemoji/PackName` | Admin: import a pack under a category |
 
-Send or forward a message with custom emoji to extract its IDs. An admin can send a pack link directly to import it under the default category. The catalog starts empty: import real pack names to populate it. Re-importing updates metadata without duplicating IDs. Search uses literal substrings, not a translation dictionary.
+Send or forward a message with custom emoji to extract its IDs. An admin can send a pack link directly to import it under the default category. The catalog starts empty: import real pack names to populate it. A curated starter manifest is provided. Re-importing updates metadata without duplicating IDs. Search supports literal substrings and a small curated Persian/English alias dictionary.
 
 ## Coverage and Telegram limitations
 
@@ -50,3 +50,9 @@ python -m unittest discover -s tests -v
 ```
 
 Tests use temporary databases and fake Telegram responses; no bot token or network is needed. A real Telegram smoke test requires your own bot token and admin ID.
+
+## Starter catalog (v0.4.0)
+
+After deployment, run `docker compose exec -T bot python seed.py`. This imports 33 publicly listed candidate packs through the Bot API and reports each result. It is safe to repeat; IDs are deduplicated. Exit code 2 means at least one pack failed; successful imports remain saved. This is not a complete Telegram catalog. `/stats` shows real counts; `/packs` browses indexed packs. The manifest sources are recorded in `seed-packs.txt`. No emoji media assets are redistributed.
+
+On servers with disabled IPv4 forwarding, keep an existing local `compose.override.yaml` using `network_mode: host` and build `network: none`. Do not change global Docker/network settings.
