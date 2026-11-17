@@ -1,0 +1,40 @@
+# Combine with the existing compose.yaml.
+services:
+  mtproto-harvester:
+    build:
+      context: .
+      dockerfile: mtproto-harvester-v2/Dockerfile
+    env_file: [.env]
+    environment:
+      DB_PATH: /data/emoji.sqlite3
+      STATE_PATH: /state/mtproto-harvester.sqlite3
+      SESSION_PATH: /sessions/emoji-reader
+      QUERY_FILE: /app/queries.txt
+    volumes:
+      - emoji_data:/data
+      - /var/lib/emoji-mtproto:/sessions
+      - /var/lib/emoji-mtproto-state:/state
+    network_mode: host
+    restart: "no"
+    init: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    command: ["python", "-u", "/app/harvest.py"]
+  mtproto-login:
+    build:
+      context: .
+      dockerfile: mtproto-harvester-v2/Dockerfile
+    env_file: [.env]
+    environment:
+      SESSION_PATH: /sessions/emoji-reader
+    volumes:
+      - /var/lib/emoji-mtproto:/sessions
+    network_mode: host
+    restart: "no"
+    init: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    profiles: [login]
+    stdin_open: true
+    tty: true
+    command: ["python", "-u", "/app/login.py"]
